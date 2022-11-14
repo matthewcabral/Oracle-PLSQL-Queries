@@ -1,0 +1,371 @@
+DECLARE
+	-- VARIAVEIS
+    V_NOME_WF VARCHAR(100):='TIM SOA306 Order Response - Update Line Item';--'Check Eligibility % Compatibility - Default';
+    V_DEFAULT_COMMENT VARCHAR(200):='[MCABRAL] - WF alterado para correção de problemas de versionamento';
+	V_WF_ROW_ID VARCHAR(15);
+    V_WF_NAME VARCHAR(200);
+    V_STATUS VARCHAR(20);
+	V_INATIVE_FLG CHAR(1);
+    V_MENOR_VERSAO INTEGER;
+    V_MAIOR_VERSAO INTEGER;
+    V_COUNT_ATIVO INTEGER;
+	V_COUNT_ATIVO_LOCAL INTEGER;
+    V_COUNT_ATIVO_ZERO INTEGER;
+    V_COUNT_INATIVO INTEGER;
+    V_IGUAL VARCHAR(10);
+    V_VERSION INTEGER;
+	V_WF_VERSION INTEGER;
+	V_WS_ID VARCHAR(15):='1@981';
+
+    CURSOR WF_V_ATIVA IS
+        SELECT
+            WF.ROW_ID,
+            WF.PROC_NAME,
+			WF.NAME,
+            WF.VERSION,
+            WF.STATUS_CD,
+            WF.INACTIVE_FLG,
+			WF.WS_ID
+        FROM SIEBEL.S_WFR_PROC WF
+        WHERE WF.PROC_NAME LIKE V_NOME_WF
+        AND WF.STATUS_CD = V_STATUS
+        AND ((WF.VERSION = '0' AND V_IGUAL = 'TRUE') OR (WF.VERSION <> '0' AND V_IGUAL <> 'TRUE'))
+        AND WF.INACTIVE_FLG = V_INATIVE_FLG
+		AND WF.WS_ID = V_WS_ID
+        ORDER BY WF.PROC_NAME ASC, WF.VERSION DESC;
+
+	CURSOR WF_VERSION IS
+        SELECT
+            WF.ROW_ID,
+            WF.PROC_NAME,
+			WF.NAME,
+            WF.VERSION,
+            WF.STATUS_CD,
+            WF.INACTIVE_FLG,
+			WF.WS_ID
+        FROM SIEBEL.S_WFR_PROC WF
+        WHERE WF.PROC_NAME LIKE V_NOME_WF
+		AND WF.VERSION <> V_WF_VERSION
+		AND WF.WS_ID = V_WS_ID
+        ORDER BY WF.PROC_NAME ASC, WF.VERSION DESC;
+	
+	CURSOR C_MAIOR_VERSAO IS
+		SELECT
+			WF.ROW_ID,
+			WF.PROC_NAME,
+			WF.NAME,
+			WF.VERSION,
+			WF.STATUS_CD,
+			WF.INACTIVE_FLG,
+			WF.WS_ID
+		FROM SIEBEL.S_WFR_PROC WF
+		WHERE WF.PROC_NAME LIKE V_NOME_WF
+		AND WF.VERSION = V_MAIOR_VERSAO
+		AND WF.WS_ID = V_WS_ID
+		ORDER BY WF.PROC_NAME ASC, WF.VERSION DESC;
+
+    CURSOR RESULT_FINAL IS
+        SELECT
+            WF.ROW_ID,
+            WF.PROC_NAME,
+			WF.NAME,
+            WF.VERSION,
+            WF.STATUS_CD,
+            WF.INACTIVE_FLG,
+			WF.WS_ID
+        FROM SIEBEL.S_WFR_PROC WF
+        WHERE (
+			WF.PROC_NAME LIKE V_NOME_WF
+			OR WF.PROC_NAME LIKE V_NOME_WF || '_OLD'
+		)
+		AND WF.WS_ID = V_WS_ID
+        ORDER BY WF.PROC_NAME ASC, WF.VERSION DESC;
+
+    -- FUNCAO QUE VERIFICA A MENOR VERSAO DO WF
+    FUNCTION VERIFY_MIN_VERSION RETURN INTEGER IS  
+        N INTEGER;
+        BEGIN
+            SELECT
+                MIN(WF.VERSION)
+            INTO N
+            FROM SIEBEL.S_WFR_PROC WF
+            WHERE WF.PROC_NAME LIKE V_NOME_WF
+			AND WF.WS_ID = V_WS_ID;
+            RETURN N;
+        END;
+
+    -- FUNCAO QUE VERIFICA A MAIOR VERSAO DO WF
+    FUNCTION VERIFY_MAX_VERSION RETURN INTEGER IS
+        N INTEGER;
+        BEGIN
+            SELECT
+                MAX(WF.VERSION)
+            INTO N
+            FROM SIEBEL.S_WFR_PROC WF
+            WHERE WF.PROC_NAME LIKE V_NOME_WF
+			AND WF.WS_ID = V_WS_ID;
+            RETURN N;
+        END;
+	
+	-- FUNCAO QUE VERIFICA A VERSAO DO WF
+    FUNCTION COMPARE_VERSION (V_VER IN VARCHAR) RETURN INTEGER IS
+        RESULTADO INTEGER;
+		N INTEGER;
+        BEGIN
+			SELECT
+				WF.VERSION
+			INTO N
+			FROM SIEBEL.S_WFR_PROC WF
+			WHERE WF.PROC_NAME LIKE V_NOME_WF
+			AND WF.VERSION = V_VER
+			AND WF.STATUS_CD = 'COMPLETED'			
+			AND WF.INACTIVE_FLG = 'N'
+			AND WF.WS_ID = V_WS_ID;
+		
+			IF(N = V_MAIOR_VERSAO) THEN
+				RESULTADO := 0;
+			ELSE
+				RESULTADO := 1;
+			END IF;
+			
+            RETURN RESULTADO;
+        END;
+
+    PROCEDURE P_UPDATE_OLD IS
+        BEGIN
+            UPDATE SIEBEL.S_WFR_PROC WF
+            SET WF.INACTIVE_FLG = 'Y',
+                WF.STATUS_CD = 'NOT_IN_USE'
+            WHERE WF.PROC_NAME LIKE V_NOME_WF || '_OLD';
+        END;
+        
+    -- PROCEDURE USADA PARA TROCA DAS VERSOES
+    PROCEDURE ALTERAR_WF (V_ID IN VARCHAR, V_NOME IN VARCHAR, V_FLG IN VARCHAR, V_STATUS IN VARCHAR, V_VER IN VARCHAR) IS
+        BEGIN
+            UPDATE SIEBEL.S_WFR_PROC WF
+            SET WF.PROC_NAME = V_NOME,
+				WF.NAME = V_NOME || ': ' || V_VER,
+                WF.DESC_TEXT = V_DEFAULT_COMMENT,
+				WF.INACTIVE_FLG = V_FLG,
+                WF.STATUS_CD = V_STATUS,
+                WF.VERSION = V_VER
+            WHERE ROW_ID = V_ID;
+        END;
+
+BEGIN
+    DBMS_OUTPUT.PUT_LINE('Inicio da execucao...');
+    DBMS_OUTPUT.PUT_LINE('');
+    
+    DBMS_OUTPUT.PUT_LINE('VERIFICANDO A MAIOR E MENOR VERSAO DO WF: ' || V_NOME_WF);
+    V_MENOR_VERSAO := VERIFY_MIN_VERSION;
+    V_MAIOR_VERSAO := VERIFY_MAX_VERSION;
+    -- APENAS PARA CONTROLE EM EXIBICAO DOS DADOS NA TELA
+    DBMS_OUTPUT.PUT_LINE('MENOR VERSAO: ' || V_MENOR_VERSAO);
+    DBMS_OUTPUT.PUT_LINE('MAIOR VERSAO: ' || V_MAIOR_VERSAO);
+    DBMS_OUTPUT.PUT_LINE('');
+
+	DBMS_OUTPUT.PUT_LINE('VERIFICANDO SE POSSUI VERSAO ATIVA = 0...');
+	V_COUNT_ATIVO_ZERO := 0;
+	-- VERIFICA SE O WF TEM VERSAO ATIVA = 0
+	V_IGUAL := 'TRUE';
+	V_STATUS := 'COMPLETED';
+	V_INATIVE_FLG := 'N';
+	FOR i IN WF_V_ATIVA LOOP
+		DBMS_OUTPUT.PUT_LINE(
+			'VERSAO ATIVA: ' ||
+			'ROW_ID: ' || i.ROW_ID || '; ' ||
+			'NOME: ' || i.PROC_NAME || '; '||
+			'VERSAO: ' || i.VERSION || '; ' ||
+			'STATUS: '|| i.STATUS_CD || '; ' ||
+			'INATIVE_FLAG: '|| i.INACTIVE_FLG
+		);
+		V_COUNT_ATIVO_ZERO := V_COUNT_ATIVO_ZERO + 1;
+	END LOOP;
+	
+	IF(V_COUNT_ATIVO_ZERO > 0) THEN
+		DBMS_OUTPUT.PUT_LINE('TOTAL: ' || V_COUNT_ATIVO_ZERO);
+		DBMS_OUTPUT.PUT_LINE('');
+		
+		-- VERIFICO SE POSSUI ALGUMA OUTRA VERSAO ATIVA <> 0
+		V_COUNT_ATIVO := 0;
+		V_IGUAL := 'FALSE';
+		V_STATUS := 'COMPLETED';
+		V_INATIVE_FLG := 'N';
+		DBMS_OUTPUT.PUT_LINE('VERIFICANDO SE POSSUI VERSAO ATIVA <> 0...');
+		FOR i IN WF_V_ATIVA LOOP
+			V_COUNT_ATIVO := V_COUNT_ATIVO + 1;
+			
+			IF(V_COUNT_ATIVO > 0) THEN
+				DBMS_OUTPUT.PUT_LINE(
+					'INATIVANDO E RENOMENANDO A VERSAO: ' || i.VERSION || '... | ' ||
+					'RESULTADO FINAL: ' ||
+					'ROW_ID: ' || i.ROW_ID || '; ' ||
+					'NOME: ' || i.PROC_NAME || '_OLD; ' ||
+					'VERSAO: ' || i.VERSION || '; ' ||
+					'STATUS: '|| 'NOT_IN_USE' || '; ' ||
+					'INATIVE_FLAG: '|| 'Y'
+				);
+				ALTERAR_WF(i.ROW_ID, (i.PROC_NAME || '_OLD'), 'Y', 'NOT_IN_USE', i.VERSION);
+				COMMIT;
+			END IF;
+		END LOOP;
+		DBMS_OUTPUT.PUT_LINE('TOTAL: ' || V_COUNT_ATIVO);
+		DBMS_OUTPUT.PUT_LINE('');
+		
+		-- VERIFICO SE POSSUI ALGUMA OUTRA VERSAO <> 0
+		V_COUNT_ATIVO := 0;
+		V_WF_VERSION := 0;
+		DBMS_OUTPUT.PUT_LINE('VERIFICANDO SE POSSUI VERSAO <> 0...');
+		FOR i IN WF_VERSION LOOP
+			V_COUNT_ATIVO := V_COUNT_ATIVO + 1;
+			
+			IF(V_COUNT_ATIVO > 0) THEN
+				DBMS_OUTPUT.PUT_LINE(
+					'INATIVANDO E RENOMENANDO A VERSAO: ' || i.VERSION || '... | ' ||
+					'RESULTADO FINAL: ' ||
+					'ROW_ID: ' || i.ROW_ID || '; ' ||
+					'NOME: ' || i.PROC_NAME || '_OLD; ' ||
+					'VERSAO: ' || i.VERSION || '; ' ||
+					'STATUS: '|| 'NOT_IN_USE' || '; ' ||
+					'INATIVE_FLAG: '|| 'Y'
+				);
+				ALTERAR_WF(i.ROW_ID, (i.PROC_NAME || '_OLD'), 'Y', 'NOT_IN_USE', i.VERSION);
+				COMMIT;
+			END IF;
+		END LOOP;
+		DBMS_OUTPUT.PUT_LINE('TOTAL: ' || V_COUNT_ATIVO);
+    ELSE
+        DBMS_OUTPUT.PUT_LINE('TOTAL: ' || V_COUNT_ATIVO_ZERO);
+		-- VERIFICO SE POSSUI ALGUMA VERSAO ATIVA <> 0
+		V_COUNT_ATIVO := 0;
+		V_COUNT_ATIVO_LOCAL := 0;
+		V_IGUAL := 'FALSE';
+		V_STATUS := 'COMPLETED';
+		V_INATIVE_FLG := 'N';
+		DBMS_OUTPUT.PUT_LINE('');
+		DBMS_OUTPUT.PUT_LINE('VERIFICANDO SE POSSUI VERSAO ATIVA <> 0...');
+		FOR i IN WF_V_ATIVA LOOP
+			V_COUNT_ATIVO := V_COUNT_ATIVO + 1;
+			V_COUNT_ATIVO_LOCAL := V_COUNT_ATIVO_LOCAL + 1;
+			
+			IF(V_COUNT_ATIVO > 0) THEN
+				IF(V_COUNT_ATIVO = 1) THEN
+					IF(I.VERSION <> V_MAIOR_VERSAO) THEN
+						-- ALTERO TEMPORARIAMENTE PARA MAIOR VERSAO + 1						
+						DBMS_OUTPUT.PUT_LINE(
+							'ALTERANDO PARA VERSAO TEMPORARIA: ' ||
+							'ROW_ID: ' || i.ROW_ID || '; ' ||
+							'NOME: ' || i.PROC_NAME || '; ' ||
+							'VERSAO: ' || i.VERSION || '; ' ||
+							'STATUS: '|| i.STATUS_CD || '; ' ||
+							'INATIVE_FLAG: '|| i.INACTIVE_FLG ||
+							' | VERSAO TEMPORARIA: ' || (V_MAIOR_VERSAO + 1)
+						);
+						ALTERAR_WF(i.ROW_ID, i.PROC_NAME, 'N', 'COMPLETED', (V_MAIOR_VERSAO + 1));
+						COMMIT;
+						
+						-- ALTERO A MAIOR VERSAO PARA VERSAO DO WF QUE ESTAVA ATIVO
+						FOR l IN C_MAIOR_VERSAO LOOP
+							DBMS_OUTPUT.PUT_LINE(
+								'ALTERANDO A MAIOR VERSAO: ' ||
+								'ROW_ID: ' || l.ROW_ID || '; ' ||
+								'NOME: ' || l.PROC_NAME || '_OLD; ' ||
+								'VERSAO: ' || l.VERSION || '; ' ||
+								'STATUS: '|| l.STATUS_CD || '; ' ||
+								'INATIVE_FLAG: '|| l.INACTIVE_FLG ||
+								' | NOVA VERSAO: ' || i.VERSION
+							);
+							ALTERAR_WF(l.ROW_ID, (l.PROC_NAME || '_OLD'), 'N', 'NOT_IN_USE', i.VERSION);
+							COMMIT;
+						END LOOP;						
+						
+						-- PEGO O WF TEMPORARIO E VOLTO ELE PARA A MAIOR VERSAO
+						DBMS_OUTPUT.PUT_LINE(
+							'ALTERANDO PARA VERSAO FINAL: ' ||
+							'ROW_ID: ' || i.ROW_ID || '; ' ||
+							'NOME: ' || i.PROC_NAME || '; ' ||
+							'VERSAO: ' || i.VERSION || '; ' ||
+							'STATUS: '|| i.STATUS_CD || '; ' ||
+							'INATIVE_FLAG: '|| i.INACTIVE_FLG ||
+							' | VERSAO FINAL: ' || V_MAIOR_VERSAO
+						);
+						ALTERAR_WF(i.ROW_ID, i.PROC_NAME, 'N', 'COMPLETED', V_MAIOR_VERSAO);
+						COMMIT;
+					ELSE
+						DBMS_OUTPUT.PUT_LINE(
+							'VERSAO ATIVA: ' ||
+							'ROW_ID: ' || i.ROW_ID || '; ' ||
+							'NOME: ' || i.PROC_NAME || '; ' ||
+							'VERSAO: ' || i.VERSION || '; ' ||
+							'STATUS: '|| i.STATUS_CD || '; ' ||
+							'INATIVE_FLAG: '|| i.INACTIVE_FLG ||
+							' | MAIOR VERSAO : ' || V_MAIOR_VERSAO
+						);
+						V_COUNT_ATIVO := 0;
+					END IF;
+				ELSE
+					DBMS_OUTPUT.PUT_LINE(
+						'INATIVANDO E RENOMENANDO A VERSAO: ' || i.VERSION || '... | ' ||
+						'RESULTADO FINAL: ' ||
+						'ROW_ID: ' || i.ROW_ID || '; ' ||
+						'NOME: ' || i.PROC_NAME || '_OLD; ' ||
+						'VERSAO: ' || i.VERSION || '; ' ||
+						'STATUS: '|| 'NOT_IN_USE' || '; ' ||
+						'INATIVE_FLAG: '|| 'Y'
+					);
+					ALTERAR_WF(i.ROW_ID, (i.PROC_NAME || '_OLD'), 'Y', 'NOT_IN_USE', i.VERSION);
+					COMMIT;
+				END IF;
+			END IF;
+		END LOOP;
+		DBMS_OUTPUT.PUT_LINE('TOTAL: ' || V_COUNT_ATIVO_LOCAL);
+		DBMS_OUTPUT.PUT_LINE('');
+		
+		-- INATIVANDO TODAS AS OUTRAS VERSOES
+		DBMS_OUTPUT.PUT_LINE('INATIVANDO TODAS AS OUTRAS VERSOES...');
+		V_WF_VERSION := V_MAIOR_VERSAO;
+		V_COUNT_ATIVO := 0;
+		FOR i IN WF_VERSION LOOP
+			V_COUNT_ATIVO := V_COUNT_ATIVO + 1;
+			
+			IF(V_COUNT_ATIVO > 0) THEN
+				DBMS_OUTPUT.PUT_LINE(
+					'INATIVANDO E RENOMENANDO A VERSAO: ' || i.VERSION || '... | ' ||
+					'RESULTADO FINAL: ' ||
+					'ROW_ID: ' || i.ROW_ID || '; ' ||
+					'NOME: ' || I.PROC_NAME || '_OLD; ' ||
+					'VERSAO: ' || i.VERSION || '; ' ||
+					'STATUS: '|| 'NOT_IN_USE' || '; ' ||
+					'INATIVE_FLAG: '|| 'Y'
+				);
+				ALTERAR_WF(i.ROW_ID, (I.PROC_NAME || '_OLD'), 'Y', 'NOT_IN_USE', i.VERSION);
+				COMMIT;
+			END IF;
+		END LOOP;
+		DBMS_OUTPUT.PUT_LINE('TOTAL: ' || V_COUNT_ATIVO);
+	
+	END IF;
+    
+    P_UPDATE_OLD;
+    COMMIT;
+
+    DBMS_OUTPUT.PUT_LINE('');
+    DBMS_OUTPUT.PUT_LINE('-----------------------------------------------------------------------------');
+    DBMS_OUTPUT.PUT_LINE('                               RESULTADO FINAL                               ');
+    DBMS_OUTPUT.PUT_LINE('-----------------------------------------------------------------------------');
+    -- LOOP USADO APENAS PARA EXIBICAO DAS ALTERACOES NA TELA
+    FOR L IN RESULT_FINAL LOOP        
+        DBMS_OUTPUT.PUT_LINE(
+            'ROW_ID: ' || L.ROW_ID || '; ' ||
+            'NOME PROC: ' || L.PROC_NAME || '; ' ||
+			'NOME: ' || L.NAME || '; ' ||
+            'VERSAO: ' || L.VERSION || '; ' ||
+            'STATUS: '|| L.STATUS_CD || '; ' ||
+            'INATIVE_FLAG: '|| L.INACTIVE_FLG
+        );
+        
+    END LOOP;
+    DBMS_OUTPUT.PUT_LINE('-----------------------------------------------------------------------------');    
+    DBMS_OUTPUT.PUT_LINE('');
+    DBMS_OUTPUT.PUT_LINE('Fim da execucao');
+END;

@@ -1,0 +1,2 @@
+CREATE USER usuario IDENTIFIED BY senha;
+GRANT SSE_ROLE TO usuario;

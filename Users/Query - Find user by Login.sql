@@ -1,0 +1,15 @@
+SELECT
+    SUS.ROW_ID                              AS "ID_USUARIO",
+    SUS.LOGIN                               AS "LOGIN",
+    SCO.FST_NAME || ' ' || SCO.LAST_NAME    AS "NOME"
+    --POS.POSTN_TYPE_CD                       AS "TIPO_POSICAO",
+    --POS.NAME                                AS "CLASSE_POSICAO",
+    --BU.NAME                                 AS "ORGANIZAÇÃO",
+    --EMP.OFFICE_NUM                          AS "NUM_CUBICULO"
+FROM SIEBEL.S_USER SUS
+LEFT JOIN SIEBEL.S_CONTACT SCO ON SCO.ROW_ID = SUS.PAR_ROW_ID
+--INNER JOIN SIEBEL.S_POSTN POS ON POS.ROW_ID = SCO.PR_HELD_POSTN_ID
+--INNER JOIN SIEBEL.S_BU BU ON BU.ROW_ID = POS.BU_ID
+--INNER JOIN SIEBEL.S_EMP_PER EMP ON EMP.ROW_ID = SUS.ROW_ID
+--WHERE SUS.ROW_ID = '1-5HEQ0DB';
+WHERE SUS.LOGIN = 'RZANATTA';
